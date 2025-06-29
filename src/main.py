@@ -11,10 +11,10 @@ from sklearn.model_selection import train_test_split
 import time
 
 # useful .py
-from settings import * # settings
-from dataset import * # data pre-processing
-from models_tmp import * # models
-from optimization_tmp import * # model selection, training, evaluation
+from tabulartextmultimodalfusion.settings import * # settings
+from tabulartextmultimodalfusion.dataset import * # data pre-processing
+from tabulartextmultimodalfusion.models import * # models
+from tabulartextmultimodalfusion.optimization import * # model selection, training, evaluation
 
 import warnings
 warnings.simplefilter('ignore')
