@@ -196,21 +196,32 @@ MODELS = [
 
 ## 📦 Installation
 
-### Basic Installation
+This project uses a two-step installation process to ensure that all dependencies and the correct Python version are set up correctly. First, you create a dedicated environment using `conda`, and then you install the package into that environment using `pip`.
+
+### Step 1: Create the Conda Environment
+
+This command uses the `environment.yaml` file to create a new conda environment named `TTMF` with all the necessary base packages, including the correct Python version.
 
 ```bash
-git clone https://github.com/your-username/TabularTextMultimodalFusion.git
-cd TabularTextMultimodalFusion
-pip install -r requirements.txt
+# Create the conda environment
+conda env create -f environment.yaml
+
+# Activate the newly created environment
+conda activate TTMF
 ```
 
-### Development Installation
+### Step 2: Install the Package (Editable Mode)
 
-For an editable installation:
+Once the environment is active, install the `TabularTextMultimodalFusion` package in "editable" mode. This is the recommended approach for development, as any changes you make to the source code will be immediately available without needing to reinstall.
+
+The `setup.py` file manages this process, using `requirements.txt` for additional `pip`-based dependencies.
 
 ```bash
+# Install the package in editable mode
 pip install -e .
 ```
+
+Now your environment is fully set up and ready for running experiments.
 
 ### Package Structure (for pip installation)
 
