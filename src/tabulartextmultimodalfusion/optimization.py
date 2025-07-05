@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 import random
 from torch.utils.data import Dataset, DataLoader
-from models import * # models
-from settings import * # settings
+from tabulartextmultimodalfusion.models import *
+from tabulartextmultimodalfusion.settings import * # settings
 import optuna
 from optuna.trial import TrialState
 from optuna.samplers import TPESampler
@@ -16,7 +16,7 @@ from sklearn.random_projection import SparseRandomProjection
 import pickle
 import os
 from sklearn.metrics import f1_score, roc_auc_score
-from dataset import * # data pre-processing
+from tabulartextmultimodalfusion.dataset import * # data pre-processing
 
 VERSION = "exp1"
 L1 = False
@@ -148,171 +148,66 @@ def cross_covariance_loss(x, y):
     
     return torch.sum(cov_xy ** 2)  # Minimize squared covariance terms
 
-class UnifiedDataLoader:
-    """Handles different data loading patterns"""
-    
-    @staticmethod
-    def extract_batch_data(batch, training_mode):
-        """Extract data from batch based on training mode"""
-        if training_mode == "graph":
-            return {
-                'text': batch.input_ids,
-                'categorical': batch.categoricals,
-                'numerical': batch.numericals,
-                'y': batch.y,
-                'mask': batch.attention_masks,
-                'edge_index': batch.edge_index,
-                'edge_attr': batch.edge_attr,
-                'train_mask': getattr(batch, 'train_mask', None),
-                'val_mask': getattr(batch, 'val_mask', None),
-                'test_mask': getattr(batch, 'test_mask', None)
-            }
-        elif training_mode == "contrastive":
-            anchor_batch, anchor_label = batch[0]
-            p_batch, _ = batch[1]
-            n_batch, _ = batch[2]
-            
-            return {
-                'anchor': {
-                    'text': anchor_batch[0],
-                    'categorical': anchor_batch[1],
-                    'numerical': anchor_batch[2],
-                    'mask': anchor_batch[3],
-                    'y': anchor_label
-                },
-                'positive': {
-                    'text': p_batch[0],
-                    'categorical': p_batch[1],
-                    'numerical': p_batch[2],
-                    'mask': p_batch[3]
-                },
-                'negative': {
-                    'text': n_batch[0],
-                    'categorical': n_batch[1],
-                    'numerical': n_batch[2],
-                    'mask': n_batch[3]
-                }
-            }
-        else:  # standard
-            return {
-                'text': batch[0],
-                'categorical': batch[1],
-                'numerical': batch[2],
-                'y': batch[3],
-                'mask': batch[4]
-            }
+from abc import ABC, abstractmethod
 
-class UnifiedLossCalculator:
-    """Handles different loss calculation strategies"""
+class BaseTrainer(ABC):
+    """Abstract base class for all trainers"""
     
-    def __init__(self, model_type, device):
-        self.model_type = model_type
-        self.device = device
-        self.mine_network = None
-        self.mine_optimizer = None
-        self.triplet_loss = TripletLoss(margin=0.1)
-        
-        if "MINE" in model_type:
-            self.mine_network = MINE(input_dim=256, hidden_dim=64).to(device)
-            self.mine_optimizer = torch.optim.Adam(self.mine_network.parameters(), lr=1e-4)
-    
-    def calculate_loss(self, outputs, targets, criterion, additional_outputs=None):
-        """Calculate loss based on model type"""
-        
-        if self.model_type == "LANISTR":
-            return criterion(outputs, targets)
-        
-        elif any(loss_type in self.model_type for loss_type in ["MINE", "InfoNCE", "MMD"]):
-            y_hat, bert_outputs, mlp_outputs = outputs
-            comb_loss = criterion(y_hat, targets)
-            
-            if "MINE" in self.model_type:
-                if self.mine_optimizer:
-                    self.mine_optimizer.zero_grad()
-                bert_outputs = bert_outputs.detach()
-                additional_loss = self.mine_network(bert_outputs, mlp_outputs)
-                if self.mine_optimizer:
-                    self.mine_optimizer.step()
-                    
-            elif "InfoNCE" in self.model_type:
-                additional_loss = info_nce_loss(bert_outputs, mlp_outputs, temperature=0.5)
-                
-            elif "MMD" in self.model_type:
-                additional_loss = mmd_loss(bert_outputs, mlp_outputs, sigma=10.0)
-            
-            loss = comb_loss + additional_loss
-            
-        else:  # Standard models
-            loss = criterion(outputs, targets)
-        
-        # Add regularization if enabled
-        if L1:
-            lambda_l1 = 1e-7 if "MINE" not in self.model_type else 1e-4
-            l1_norm = sum(torch.sum(torch.abs(param)) for param in self.model.parameters())
-            loss += lambda_l1 * l1_norm
-            
-        if L2:
-            l2_lambda = 1e-4
-            l2_reg = sum(param.pow(2).sum() for param in self.model.parameters())
-            loss += l2_lambda * l2_reg
-            
-        return loss
-    
-    def calculate_contrastive_loss(self, anchor_outputs, positive_outputs, negative_outputs, targets, criterion):
-        """Calculate contrastive loss for triplet training"""
-        classification_loss = criterion(anchor_outputs, targets)
-        triplet_loss_val = self.triplet_loss(anchor_outputs, positive_outputs, negative_outputs)
-        return classification_loss + triplet_loss_val
-
-class UnifiedModelForward:
-    """Handles different model forward passes"""
-    
-    @staticmethod
-    def forward_pass(model, model_type, data, training_mode="standard"):
-        """Unified forward pass for different model types and training modes"""
-        
-        if training_mode == "graph":
-            return model(
-                data['text'], data['mask'], data['categorical'], 
-                data['numerical'].float(), data['edge_index'], data['edge_attr']
-            )
-        elif training_mode == "contrastive":
-            anchor_data = data['anchor']
-            positive_data = data['positive']
-            negative_data = data['negative']
-            
-            anchor_out = model(
-                anchor_data['text'], anchor_data['mask'], 
-                anchor_data['categorical'], anchor_data['numerical'].float()
-            )
-            positive_out = model(
-                positive_data['text'], positive_data['mask'],
-                positive_data['categorical'], positive_data['numerical'].float()
-            )
-            negative_out = model(
-                negative_data['text'], negative_data['mask'],
-                negative_data['categorical'], negative_data['numerical'].float()
-            )
-            
-            return anchor_out, positive_out, negative_out
-        else:  # standard
-            return model(
-                data['text'], data['mask'], data['categorical'], data['numerical']
-            )
-
-class UnifiedTrainer:
-    """Unified training class that handles all training variants"""
-    
-    def __init__(self, model, model_type, dataset, device, training_mode="standard"):
+    def __init__(self, model, model_type, dataset, device):
         self.model = model
         self.model_type = model_type
         self.dataset = dataset
         self.device = device
-        self.training_mode = training_mode
-        self.loss_calculator = UnifiedLossCalculator(model_type, device)
+        self.best_val_perf = 0
         
-    def train_epoch(self, loader, criterion, optimizer, seed):
-        """Train for one epoch"""
+    @abstractmethod
+    def process_batch(self, batch, criterion, optimizer):
+        """Process a single batch - must be implemented by subclasses"""
+        pass
+    
+    @abstractmethod
+    def compute_metrics(self, loader, data_split=""):
+        """Compute performance metrics - must be implemented by subclasses"""
+        pass
+    
+    def train(self, loader_train, loader_validation, n_epochs, criterion, optimizer, 
+          factor=0.95, seed=42, verbose=True, **kwargs):
+        """Common training loop for all trainers"""
+        scheduler = ExponentialLR(optimizer, gamma=factor)
+        
+        for epoch in range(1, n_epochs + 1):
+            start_time = time.time()
+            
+            # Training
+            train_loss = self._train_epoch(loader_train, criterion, optimizer, seed)
+            
+            end_time = time.time()
+            
+            if verbose:
+                print(f"---------training time (s): {round(end_time-start_time,0)} ---------")
+                print(f"epoch: {epoch}, training loss: {round(train_loss,5)}")
+            
+            # Validation
+            val_loss = self._evaluate(loader_validation, criterion, seed)
+            val_perf = self.compute_metrics(loader_validation, f"{self.dataset}_val")["accuracy"]
+            
+            scheduler.step()
+            
+            if verbose:
+                print(f"epoch: {epoch}, validation loss: {round(val_loss,5)}, validation performance: {round(val_perf,5)}")
+            
+            # Early stopping
+            if val_perf > self.best_val_perf * 1.001:
+                torch.save(self.model, 'checkpoint.pt')
+                self.best_val_perf = val_perf
+            else:
+                break
+        
+        self.model = torch.load("checkpoint.pt", weights_only=False)
+        return self.model, epoch
+    
+    def _train_epoch(self, loader, criterion, optimizer, seed):
+        """Common training epoch logic"""
         self.model.train()
         total_loss = 0
         total_samples = 0
@@ -320,59 +215,14 @@ class UnifiedTrainer:
         torch.manual_seed(seed)
         
         for batch in loader:
-            optimizer.zero_grad()
-            
-            # Extract batch data
-            data = UnifiedDataLoader.extract_batch_data(batch, self.training_mode)
-            
-            # Move data to device
-            data = self._move_to_device(data)
-            
-            # Forward pass
-            if self.training_mode == "contrastive":
-                anchor_out, positive_out, negative_out = UnifiedModelForward.forward_pass(
-                    self.model, self.model_type, data, self.training_mode
-                )
-                
-                # Handle different output formats
-                if isinstance(anchor_out, tuple):
-                    anchor_out = anchor_out[0]
-                    positive_out = positive_out[0]
-                    negative_out = negative_out[0]
-                
-                loss = self.loss_calculator.calculate_contrastive_loss(
-                    anchor_out, positive_out, negative_out, data['anchor']['y'], criterion
-                )
-                batch_size = data['anchor']['y'].shape[0]
-                
-            else:
-                outputs = UnifiedModelForward.forward_pass(
-                    self.model, self.model_type, data, self.training_mode
-                )
-                
-                # Handle different output formats
-                if isinstance(outputs, tuple):
-                    if len(outputs) == 3:  # Combined model with bert/mlp outputs
-                        loss = self.loss_calculator.calculate_loss(outputs, data['y'], criterion)
-                    else:  # Standard tuple output
-                        loss = self.loss_calculator.calculate_loss(outputs[0], data['y'], criterion)
-                else:
-                    loss = self.loss_calculator.calculate_loss(outputs, data['y'], criterion)
-                
-                batch_size = data['y'].shape[0]
-            
-            # Backward pass
-            loss.backward()
-            optimizer.step()
-            
-            # Record loss
-            total_loss += loss.item() * batch_size
+            loss, batch_size = self.process_batch(batch, criterion, optimizer)
+            total_loss += loss * batch_size
             total_samples += batch_size
-        
+            
         return total_loss / total_samples
     
-    def evaluate(self, loader, criterion, seed):
-        """Evaluate model"""
+    def _evaluate(self, loader, criterion, seed):
+        """Common evaluation logic"""
         self.model.eval()
         total_loss = 0
         total_samples = 0
@@ -381,236 +231,348 @@ class UnifiedTrainer:
         
         with torch.no_grad():
             for batch in loader:
-                data = UnifiedDataLoader.extract_batch_data(batch, self.training_mode)
-                data = self._move_to_device(data)
-                
-                outputs = UnifiedModelForward.forward_pass(
-                    self.model, self.model_type, data, self.training_mode
-                )
-                
-                if isinstance(outputs, tuple):
-                    loss = criterion(outputs[0], data['y'])
-                else:
-                    loss = criterion(outputs, data['y'])
-                
-                batch_size = data['y'].shape[0]
-                total_loss += loss.item() * batch_size
+                loss, batch_size = self._evaluate_batch(batch, criterion)
+                total_loss += loss * batch_size
                 total_samples += batch_size
-        
+                
         return total_loss / total_samples
     
-    def compute_performance(self, loader, seed, data_split=""):
-        """Compute performance metrics"""
-        self.model.eval()
-        preds_list = []
-        labels_list = []
+    @abstractmethod
+    def _evaluate_batch(self, batch, criterion):
+        """Evaluate a single batch - must be implemented by subclasses"""
+        pass
+
+
+class StandardTrainer(BaseTrainer):
+    """Optimized trainer for standard models"""
+    
+    def __init__(self, model, model_type, dataset, device):
+        super().__init__(model, model_type, dataset, device)
+        self.use_mine = "MINE" in model_type
+        self.use_infonce = "InfoNCE" in model_type
+        self.use_mmd = "MMD" in model_type
         
-        torch.manual_seed(seed)
+        if self.use_mine:
+            self.mine_network = MINE(input_dim=768, hidden_dim=64).to(device)
+            self.mine_optimizer = torch.optim.Adam(self.mine_network.parameters(), lr=1e-4)
+    
+    def process_batch(self, batch, criterion, optimizer):
+        """Fast batch processing for standard training"""
+        # Direct unpacking - no dictionary overhead
+        text, cat, num, y, mask = batch
+        
+        # Batch to device - single operation
+        text = text.to(self.device)
+        cat = cat.to(self.device)
+        num = num.to(self.device)
+        y = y.to(self.device)
+        mask = mask.to(self.device)
+        
+        optimizer.zero_grad()
+        
+        # Direct model call - no abstraction
+        outputs = self.model(text, mask, cat, num)
+        
+        # Fast loss calculation based on model type
+        if self.use_mine or self.use_infonce or self.use_mmd:
+            y_hat, bert_out, mlp_out = outputs
+            loss = criterion(y_hat, y)
+            
+            if self.use_mine:
+                self.mine_optimizer.zero_grad()
+                mine_loss = self.mine_network(bert_out.detach(), mlp_out.detach())
+                loss = loss + mine_loss
+                mine_loss.backward()
+                self.mine_optimizer.step()
+            elif self.use_infonce:
+                loss = loss + info_nce_loss(bert_out, mlp_out, temperature=0.5)
+            elif self.use_mmd:
+                loss = loss + mmd_loss(bert_out, mlp_out, sigma=10.0)
+        else:
+            # Simple case - direct loss
+            y_hat = outputs[0] if isinstance(outputs, tuple) else outputs
+            loss = criterion(y_hat, y)
+        
+        loss.backward()
+        optimizer.step()
+        
+        return loss.item(), y.size(0)
+    
+    def _evaluate_batch(self, batch, criterion):
+        """Fast batch evaluation"""
+        text, cat, num, y, mask = batch
+        
+        text = text.to(self.device)
+        cat = cat.to(self.device)
+        num = num.to(self.device)
+        y = y.to(self.device)
+        mask = mask.to(self.device)
+        
+        outputs = self.model(text, mask, cat, num)
+        y_hat = outputs[0] if isinstance(outputs, tuple) else outputs
+        loss = criterion(y_hat, y)
+        
+        return loss.item(), y.size(0)
+    
+    def compute_metrics(self, loader, data_split=""):
+        """Fast metrics computation"""
+        self.model.eval()
+        all_preds = []
+        all_labels = []
+        
+        with torch.no_grad():
+            for text, cat, num, y, mask in loader:
+                # Fast batched operations
+                text = text.to(self.device)
+                mask = mask.to(self.device)
+                cat = cat.to(self.device)
+                num = num.to(self.device)
+                
+                outputs = self.model(text, mask, cat, num)
+                pred = outputs[0] if isinstance(outputs, tuple) else outputs
+                
+                all_preds.append(F.softmax(pred, dim=1))
+                all_labels.append(y)
+        
+        # Concatenate once at the end
+        all_preds = torch.cat(all_preds).cpu()
+        all_labels = torch.cat(all_labels).cpu()
+        preds_classes = all_preds.argmax(dim=1)
+        
+        # Compute metrics
+        accuracy = (preds_classes == all_labels).float().mean().item()
+        micro_f1 = f1_score(all_labels, preds_classes, average='micro')
+        macro_f1 = f1_score(all_labels, preds_classes, average='macro')
+        auc = roc_auc_score(all_labels, all_preds[:, 1]) if all_preds.size(1) == 2 else None
+        
+        return {"accuracy": accuracy, "micro_f1": micro_f1, "macro_f1": macro_f1, "auc": auc}
+
+
+class ContrastiveTrainer(BaseTrainer):
+    """Trainer for contrastive learning"""
+    
+    def __init__(self, model, model_type, dataset, device, margin=0.1):
+        super().__init__(model, model_type, dataset, device)
+        self.triplet_loss = TripletLoss(margin=margin)
+    
+    def process_batch(self, batch, criterion, optimizer):
+        """Process triplet batch"""
+        (anchor, anchor_label), (positive, _), (negative, _) = batch
+        
+        # Unpack and move to device efficiently
+        a_text, a_cat, a_num, a_mask = anchor[0].to(self.device), anchor[1].to(self.device), \
+                                       anchor[2].to(self.device), anchor[3].to(self.device)
+        a_y = anchor_label.to(self.device)
+        
+        p_text, p_cat, p_num, p_mask = positive[0].to(self.device), positive[1].to(self.device), \
+                                       positive[2].to(self.device), positive[3].to(self.device)
+        
+        n_text, n_cat, n_num, n_mask = negative[0].to(self.device), negative[1].to(self.device), \
+                                       negative[2].to(self.device), negative[3].to(self.device)
+        
+        optimizer.zero_grad()
+        
+        # Forward passes
+        anchor_out = self.model(a_text, a_mask, a_cat, a_num)
+        positive_out = self.model(p_text, p_mask, p_cat, p_num)
+        negative_out = self.model(n_text, n_mask, n_cat, n_num)
+        
+        # Extract first element if tuple
+        anchor_out = anchor_out[0] if isinstance(anchor_out, tuple) else anchor_out
+        positive_out = positive_out[0] if isinstance(positive_out, tuple) else positive_out
+        negative_out = negative_out[0] if isinstance(negative_out, tuple) else negative_out
+        
+        # Combined loss
+        class_loss = criterion(anchor_out, a_y)
+        triplet_loss = self.triplet_loss(anchor_out, positive_out, negative_out)
+        loss = class_loss + triplet_loss
+        
+        loss.backward()
+        optimizer.step()
+        
+        return loss.item(), a_y.size(0)
+    
+    def _evaluate_batch(self, batch, criterion):
+        """Evaluate using standard format"""
+        # For validation, use standard batch format
+        text, cat, num, y, mask = batch
+        
+        text = text.to(self.device)
+        cat = cat.to(self.device)
+        num = num.to(self.device)
+        y = y.to(self.device)
+        mask = mask.to(self.device)
+        
+        outputs = self.model(text, mask, cat, num)
+        y_hat = outputs[0] if isinstance(outputs, tuple) else outputs
+        loss = criterion(y_hat, y)
+        
+        return loss.item(), y.size(0)
+    
+    def compute_metrics(self, loader, data_split=""):
+        """Use same metrics computation as standard trainer"""
+        return StandardTrainer.compute_metrics(self, loader, data_split)
+
+
+class GraphTrainer(BaseTrainer):
+    """Trainer for graph-based models"""
+    
+    def process_batch(self, batch, criterion, optimizer):
+        """Process graph batch"""
+        # Direct attribute access - no dictionary
+        text = batch.input_ids.to(self.device)
+        cat = batch.categoricals.to(self.device)
+        num = batch.numericals.to(self.device)
+        mask = batch.attention_masks.to(self.device)
+        edge_index = batch.edge_index.to(self.device)
+        edge_attr = batch.edge_attr.to(self.device)
+        y = batch.y.to(self.device)
+        
+        optimizer.zero_grad()
+        
+        outputs = self.model(text, mask, cat, num.float(), edge_index, edge_attr)
+        y_hat = outputs[0] if isinstance(outputs, tuple) else outputs
+        
+        # Apply train mask if available
+        if hasattr(batch, 'train_mask'):
+            loss = criterion(y_hat[batch.train_mask], y[batch.train_mask])
+        else:
+            loss = criterion(y_hat, y)
+        
+        loss.backward()
+        optimizer.step()
+        
+        return loss.item(), y.size(0)
+    
+    def _evaluate_batch(self, batch, criterion):
+        """Evaluate graph batch"""
+        text = batch.input_ids.to(self.device)
+        cat = batch.categoricals.to(self.device)
+        num = batch.numericals.to(self.device)
+        mask = batch.attention_masks.to(self.device)
+        edge_index = batch.edge_index.to(self.device)
+        edge_attr = batch.edge_attr.to(self.device)
+        y = batch.y.to(self.device)
+        
+        outputs = self.model(text, mask, cat, num.float(), edge_index, edge_attr)
+        y_hat = outputs[0] if isinstance(outputs, tuple) else outputs
+        
+        if hasattr(batch, 'val_mask'):
+            loss = criterion(y_hat[batch.val_mask], y[batch.val_mask])
+        else:
+            loss = criterion(y_hat, y)
+        
+        return loss.item(), y.size(0)
+    
+    def compute_metrics(self, loader, data_split=""):
+        """Compute metrics for graph data"""
+        self.model.eval()
+        all_preds = []
+        all_labels = []
         
         with torch.no_grad():
             for batch in loader:
-                data = UnifiedDataLoader.extract_batch_data(batch, self.training_mode)
-                data = self._move_to_device(data)
+                text = batch.input_ids.to(self.device)
+                cat = batch.categoricals.to(self.device)
+                num = batch.numericals.to(self.device)
+                mask = batch.attention_masks.to(self.device)
+                edge_index = batch.edge_index.to(self.device)
+                edge_attr = batch.edge_attr.to(self.device)
+                y = batch.y
                 
-                outputs = UnifiedModelForward.forward_pass(
-                    self.model, self.model_type, data, self.training_mode
-                )
+                outputs = self.model(text, mask, cat, num.float(), edge_index, edge_attr)
+                pred = outputs[0] if isinstance(outputs, tuple) else outputs
                 
-                if self.training_mode == "graph":
-                    pred = outputs[0] if isinstance(outputs, tuple) else outputs
-                    
-                    # Apply masks for graph data
-                    if "train" in data_split:
-                        pred = pred[data['train_mask']]
-                        labels = data['y'][data['train_mask']]
-                    elif "val" in data_split:
-                        pred = pred[data['val_mask']]
-                        labels = data['y'][data['val_mask']]
-                    elif "test" in data_split:
-                        pred = pred[data['test_mask']]
-                        labels = data['y'][data['test_mask']]
-                    else:
-                        pred = pred
-                        labels = data['y']
-                        
-                    p_hat = F.softmax(pred, dim=1)
-                    
-                else:
-                    pred = outputs[0] if isinstance(outputs, tuple) else outputs
-                    p_hat = F.softmax(pred, dim=1)
-                    
-                    labels = data['y']
+                # Apply appropriate mask
+                if "train" in data_split and hasattr(batch, 'train_mask'):
+                    pred = pred[batch.train_mask]
+                    y = y[batch.train_mask]
+                elif "val" in data_split and hasattr(batch, 'val_mask'):
+                    pred = pred[batch.val_mask]
+                    y = y[batch.val_mask]
+                elif "test" in data_split and hasattr(batch, 'test_mask'):
+                    pred = pred[batch.test_mask]
+                    y = y[batch.test_mask]
                 
-                if p_hat.size(0) > 0:  # Check if there are samples
-                    preds_list.append(p_hat)
-                    labels_list.append(labels)
+                if pred.size(0) > 0:
+                    all_preds.append(F.softmax(pred, dim=1).cpu())
+                    all_labels.append(y.cpu())
         
-        if not preds_list:
+        if not all_preds:
             return {"accuracy": None, "micro_f1": None, "macro_f1": None, "auc": None}
         
-        labels_list = torch.cat(labels_list)
-        preds_list = torch.cat(preds_list)
-        preds_classes = torch.argmax(preds_list, dim=1)
+        all_preds = torch.cat(all_preds)
+        all_labels = torch.cat(all_labels)
+        preds_classes = all_preds.argmax(dim=1)
         
-        # Calculate metrics
-        accuracy = (preds_classes == labels_list).float().mean().item()
+        accuracy = (preds_classes == all_labels).float().mean().item()
+        micro_f1 = f1_score(all_labels, preds_classes, average='micro')
+        macro_f1 = f1_score(all_labels, preds_classes, average='macro')
+        auc = roc_auc_score(all_labels, all_preds[:, 1]) if all_preds.size(1) == 2 else None
         
-        # Move to CPU for sklearn
-        preds_classes_np = preds_classes.cpu().numpy()
-        labels_np = labels_list.cpu().numpy()
-        preds_probs_np = preds_list.cpu().numpy()
-        
-        # Micro and Macro F1
-        micro_f1 = f1_score(labels_np, preds_classes_np, average='micro')
-        macro_f1 = f1_score(labels_np, preds_classes_np, average='macro')
-        
-        # AUC only for binary classification
-        auc = None
-        if preds_probs_np.shape[1] == 2:
-            auc = roc_auc_score(labels_np, preds_probs_np[:, 1])
-        
-        return {
-            "accuracy": accuracy,
-            "micro_f1": micro_f1,
-            "macro_f1": macro_f1,
-            "auc": auc,
-        }
-    
-    def train(self, loader_train, loader_validation, n_epochs, criterion, optimizer, 
-              factor=0.95, seed=42, verbose=True, triplet_loader=None):
-        """Main training loop"""
-        
-        # Use triplet loader if provided and training mode is contrastive
-        if triplet_loader is not None:
-            self.training_mode = "contrastive"
-            train_loader = triplet_loader
-        else:
-            train_loader = loader_train
-        
-        best_val_perf = 0
-        scheduler = ExponentialLR(optimizer, gamma=factor)
-        
-        training_loss = []
-        validation_loss = []
-        training_acc = []
-        validation_acc = []
-        
-        for epoch in range(1, n_epochs + 1):
-            start_time = time.time()
-            
-            # Training
-            train_loss = self.train_epoch(train_loader, criterion, optimizer, seed)
-            
-            # Validation
-            val_loss = self.evaluate(loader_validation, criterion, seed)
-            
-            # Performance computation
-            train_perf = self.compute_performance(loader_train, seed, f"{self.dataset}_train")["accuracy"]
-            val_perf = self.compute_performance(loader_validation, seed, f"{self.dataset}_val")["accuracy"]
-            
-            # Scheduler step
-            scheduler.step()
-            
-            # Record metrics
-            training_loss.append(train_loss)
-            validation_loss.append(val_loss)
-            training_acc.append(train_perf)
-            validation_acc.append(val_perf)
-            
-            if verbose:
-                end_time = time.time()
-                print(f"---------training time (s): {round(end_time-start_time,0)} ---------")
-                print(f"epoch: {epoch}, training loss: {round(train_loss,5)}")
-                print(f"epoch: {epoch}, validation loss: {round(val_loss,5)}, validation performance: {round(val_perf,5)}")
-            
-            # Save best model
-            if val_perf > best_val_perf * 1.001:
-                torch.save(self.model, 'checkpoint.pt')
-                best_val_perf = val_perf
-            else:
-                break
-        
-        # Load best model
-        self.model = torch.load("checkpoint.pt", weights_only=False)
-        
-        # Save training history if needed
-        self._save_training_history(training_loss, validation_loss, training_acc, validation_acc, seed)
-        
-        return self.model, epoch
-    
-    def _move_to_device(self, data):
-        """Move data to device recursively"""
-        if isinstance(data, dict):
-            return {k: self._move_to_device(v) for k, v in data.items()}
-        elif isinstance(data, torch.Tensor):
-            return data.to(self.device)
-        else:
-            return data
-    
-    def _save_training_history(self, training_loss, validation_loss, training_acc, validation_acc, seed=42):
-        """Save training history if enabled"""
-        save_ = False  # Set to True if you want to save
-        
-        if save_:
-            directory = f'Outputs_{VERSION}'
-            os.makedirs(directory, exist_ok=True)
-            
-            files = {
-                f"training_loss_{self.model_type}_{self.dataset}_{seed}.pkl": training_loss,
-                f"validation_loss_{self.model_type}_{self.dataset}_{seed}.pkl": validation_loss,
-                f"training_accuracy_{self.model_type}_{self.dataset}_{seed}.pkl": training_acc,
-                f"validation_accuracy_{self.model_type}_{self.dataset}_{seed}.pkl": validation_acc,
-            }
-            
-            for filename, data in files.items():
-                filepath = os.path.join(directory, filename)
-                with open(filepath, "wb") as f:
-                    pickle.dump(data, f)
+        return {"accuracy": accuracy, "micro_f1": micro_f1, "macro_f1": macro_f1, "auc": auc}
 
-# Convenience functions for backward compatibility
-def unified_training(model, dataset, model_type, loader_train, n_epochs, loader_validation, 
-                    criterion, optimizer, factor=0.95, seed=42, verbose=True, device="cuda",
-                    training_mode="standard", triplet_loader=None):
-    """
-    Unified training function that replaces all the individual training functions
-    
-    Args:
-        model: PyTorch model
-        dataset: Dataset name
-        model_type: Type of model (affects loss calculation)
-        loader_train: Training data loader
-        n_epochs: Number of epochs
-        loader_validation: Validation data loader
-        criterion: Loss criterion
-        optimizer: Optimizer
-        factor: Learning rate decay factor
-        seed: Random seed
-        verbose: Whether to print progress
-        device: Device to use
-        training_mode: "standard", "graph", or "contrastive"
-        triplet_loader: Triplet loader for contrastive learning (optional)
-    
-    Returns:
-        Trained model and final epoch number
-    """
-    trainer = UnifiedTrainer(model, model_type, dataset, device, training_mode)
-    return trainer.train(loader_train, loader_validation, n_epochs, criterion, optimizer, 
-                        factor, seed, verbose, triplet_loader)
 
-def unified_evaluation(model_type, model, loader, criterion, seed, device, training_mode="standard"):
-    """
-    Unified evaluation function
-    """
-    trainer = UnifiedTrainer(model, model_type, "", device, training_mode)
-    return trainer.evaluate(loader, criterion, seed)
+# Factory function for creating trainers
+def create_trainer(model, model_type, dataset, device, training_mode="standard", **kwargs):
+    """Create appropriate trainer based on training mode"""
+    if training_mode == "standard":
+        return StandardTrainer(model, model_type, dataset, device)
+    elif training_mode == "contrastive":
+        margin = kwargs.get('margin', 0.1)
+        return ContrastiveTrainer(model, model_type, dataset, device, margin)
+    elif training_mode == "graph":
+        return GraphTrainer(model, model_type, dataset, device)
+    else:
+        raise ValueError(f"Unknown training mode: {training_mode}")
 
-def unified_performance(model, dataset, loader_target, model_type, seed, device, 
-                       training_mode="standard", data_split=""):
+
+# Convenience function for backward compatibility
+def fast_unified_training(model, dataset, model_type, loader_train, n_epochs, loader_validation, 
+                         criterion, optimizer, factor=0.95, seed=42, verbose=True, device="cuda",
+                         training_mode="standard", triplet_loader=None, **kwargs):
     """
-    Unified performance computation function
+    Fast unified training function with mode-specific optimizations
+    
+    Usage:
+        # Standard training
+        model, epoch = fast_unified_training(model, dataset, model_type, loader_train, 
+                                           n_epochs, loader_val, criterion, optimizer)
+        
+        # Contrastive training
+        model, epoch = fast_unified_training(model, dataset, model_type, loader_train,
+                                           n_epochs, loader_val, criterion, optimizer,
+                                           training_mode="contrastive", 
+                                           triplet_loader=triplet_loader, margin=0.5)
+        
+        # Graph training
+        model, epoch = fast_unified_training(model, dataset, model_type, graph_loader,
+                                           n_epochs, graph_val_loader, criterion, optimizer,
+                                           training_mode="graph")
     """
-    trainer = UnifiedTrainer(model, model_type, dataset, device, training_mode)
-    return trainer.compute_performance(loader_target, seed, data_split)
+    trainer = create_trainer(model, model_type, dataset, device, training_mode, **kwargs)
+    
+    # Use triplet loader for contrastive training if provided
+    if training_mode == "contrastive" and triplet_loader is not None:
+        return trainer.train(triplet_loader, loader_validation, n_epochs, criterion, 
+                           optimizer, factor, seed, verbose)
+    else:
+        return trainer.train(loader_train, loader_validation, n_epochs, criterion, 
+                           optimizer, factor, seed, verbose)
+
+
+# Performance evaluation functions
+def fast_unified_evaluation(model_type, model, loader, criterion, seed, device, training_mode="standard"):
+    """Fast unified evaluation"""
+    trainer = create_trainer(model, model_type, "", device, training_mode)
+    return trainer._evaluate(loader, criterion, seed)
+
+
+def fast_unified_performance(model, dataset, loader_target, model_type, seed, device, 
+                           training_mode="standard", data_split=""):
+    """Fast unified performance computation"""
+    trainer = create_trainer(model, model_type, dataset, device, training_mode)
+    return trainer.compute_metrics(loader_target, data_split)
 
 
 

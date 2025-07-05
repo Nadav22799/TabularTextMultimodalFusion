@@ -585,6 +585,7 @@ class CombinedModelSumW4(nn.Module):
                                 nn.ReLU(),
                                 nn.Dropout(dropout),
                                 nn.Linear(d_fc, num_classes))
+        
                                 
         
         self.device = device
@@ -592,6 +593,7 @@ class CombinedModelSumW4(nn.Module):
     def forward(self, input_ids, attention_mask, categoricals, numericals):
 
         pooled_output1, pooled_output2, input_embeddings1, input_embeddings2 = self.base_model(input_ids, attention_mask, categoricals, numericals)
+        #print(pooled_output1.size(), self.weights.size(), self.weights[0].size())
 
         combined_output = self.weights[0] * pooled_output1 + self.weights[1] * pooled_output2 + self.weights[2] * input_embeddings1 + self.weights[3] * input_embeddings2
         #weights = F.softmax(self.weights, dim=1)  # Normalize scores into probabilities
@@ -1019,15 +1021,34 @@ class BertWithTabular(nn.Module):
 
 # Define the MLP model
 class MLPModel(nn.Module):
-    def __init__(self, input_dim, num_classes):
+    def __init__(self, input_dim, num_classes, dropout):
         super(MLPModel, self).__init__()
-        self.fc1 = nn.Linear(input_dim, input_dim)
-        self.fc2 = nn.Linear(input_dim, num_classes)
+
+        hidden_dim = input_dim
+
+        # Define layers
+        self.layers = nn.ModuleList([
+            nn.Linear(input_dim, hidden_dim),  # fc1
+            nn.Linear(hidden_dim, hidden_dim), # fc2
+            nn.Linear(hidden_dim, hidden_dim), # fc3
+            nn.Linear(hidden_dim, hidden_dim), # fc4
+            nn.Linear(hidden_dim, hidden_dim), # fc5
+            nn.Linear(hidden_dim, hidden_dim), # fc6
+        ])
+        self.output_layer = nn.Linear(hidden_dim, num_classes)
+
+        # Activation and Dropout
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        x = torch.relu(self.fc1(x))
-        return self.fc2(x)
+        for layer in self.layers:
+            residual = x
+            x = self.relu(layer(x) + residual)
+            x = self.dropout(x)
 
+        return self.output_layer(x)
+        
 #BertClassifier3
 class Bert(nn.Module):
     def __init__(self):
@@ -1199,13 +1220,30 @@ class TabularEmbedding(nn.Module):
         return torch.cat(features, dim=-1)
     
     def _fourier_transform_vec(self, x):
-        """Vectorized Fourier feature expansion."""
-        features = [torch.ones_like(x)]
-        for k in range(1, self.num_fourier_terms//2 + 1):
-            features.append(torch.sin(k * x))
-            features.append(torch.cos(k * x))
-        features.append(torch.sin((k+1) * x))
-        return torch.cat(features, dim=-1)
+        """
+        Efficient vectorized Fourier feature expansion that generates exactly self.embed_dim features.
+        """
+        if x.dim() == 1:
+            x = x.unsqueeze(-1)
+        batch_size = x.shape[0]
+        num_features = self.embed_dim
+        # Compute how many sin/cos pairs we can fit
+        num_pairs = (num_features - 1) // 2
+        k = torch.arange(1, num_pairs + 1, device=x.device).float()  # (num_pairs,)
+        xk = x * k  # (batch_size, num_pairs)
+        sin_features = torch.sin(xk)
+        cos_features = torch.cos(xk)
+        features = [torch.ones_like(x[:, :1]), sin_features, cos_features]
+        out = torch.cat(features, dim=-1)
+        # If we need more features to reach num_features, add one more sin for the next frequency
+        if out.shape[1] < num_features:
+            next_k = torch.tensor([[num_pairs + 1]], device=x.device).float()
+            next_feature = torch.sin(x * next_k)
+            out = torch.cat([out, next_feature], dim=-1)
+        # If embed_dim is odd, trim to embed_dim
+        if out.shape[1] > num_features:
+            out = out[:, :num_features]
+        return out
     
     def _rbf_transform(self, x):
         """RBF expansion."""
@@ -1373,19 +1411,19 @@ class GCN(torch.nn.Module):
 def init_model(model_type, d_model, max_len, vocab_size, cat_vocab_sizes, 
                num_cat_var, num_numerical_var, quantiles, n_heads,
                d_ff, n_layers, dropout, d_fc, n_classes, seed, device, text_model="", ca_dropout=0.1):
-    
+    #torch.manual_seed(seed)
     TabEmbed = TabularEmbedding(cat_vocab_sizes, num_numerical_var, d_model, numerical_transform='linear')
     bert_self_attention = False
-    if "Fourier" in model_type:
-        TabEmbed = TabularEmbedding(cat_vocab_sizes, num_numerical_var, d_model, numerical_transform='fourier')#d_ff
+    if "FourierVec" in model_type:
+        TabEmbed = TabularEmbedding(cat_vocab_sizes, num_numerical_var, d_model, numerical_transform='fourier_vec')#d_ff
     elif "PosEnVec" in model_type:
         TabEmbed = TabularEmbedding(cat_vocab_sizes, num_numerical_var, d_model, numerical_transform='positional')
-    elif "FourierVec" in model_type:
-        TabEmbed = TabularEmbedding(cat_vocab_sizes, num_numerical_var, d_model, numerical_transform='fourier_vec')
-    elif "RBF" in model_type:
-        TabEmbed = TabularEmbedding(cat_vocab_sizes, num_numerical_var, d_model, numerical_transform='rbf')
+    elif "Fourier" in model_type:
+        TabEmbed = TabularEmbedding(cat_vocab_sizes, num_numerical_var, d_model, numerical_transform='fourier')
     elif "RBFVec" in model_type:
         TabEmbed = TabularEmbedding(cat_vocab_sizes, num_numerical_var, d_model, numerical_transform='rbf_vec')
+    elif "RBF" in model_type:
+        TabEmbed = TabularEmbedding(cat_vocab_sizes, num_numerical_var, d_model, numerical_transform='rbf')
     elif "Sigmoid" in model_type:
         TabEmbed = TabularEmbedding(cat_vocab_sizes, num_numerical_var, d_model, numerical_transform='sigmoid')
     elif "Chebyshev" in model_type:    
@@ -1395,8 +1433,8 @@ def init_model(model_type, d_model, max_len, vocab_size, cat_vocab_sizes,
         MultiModelsObj = UniModels
     elif "CrossAttention" in model_type:
         MultiModelsObj = CrossAttention
-    elif "CrossAttentionSkipNet" in model_type:
-        MultiModelsObj = CrossAttentionSkipNet
+    #elif "CrossAttentionSkipNet" in model_type:
+     #   MultiModelsObj = CrossAttentionSkipNet
 
     if model_type in ["TTT-SRP", "TTT-PCA", "TTT-Kaiming"]:
         model_type = "TTT"
