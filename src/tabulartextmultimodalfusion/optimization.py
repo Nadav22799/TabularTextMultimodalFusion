@@ -17,6 +17,8 @@ import pickle
 import os
 from sklearn.metrics import f1_score, roc_auc_score
 from tabulartextmultimodalfusion.dataset import * # data pre-processing
+import matplotlib.pyplot as plt
+import json
 
 VERSION = "exp1"
 L1 = False
@@ -184,8 +186,9 @@ class BaseTrainer(ABC):
             end_time = time.time()
             
             if verbose:
+                train_perf = self.compute_metrics(loader_train, f"{self.dataset}_train")["accuracy"]
                 print(f"---------training time (s): {round(end_time-start_time,0)} ---------")
-                print(f"epoch: {epoch}, training loss: {round(train_loss,5)}")
+                print(f"epoch: {epoch}, training loss: {round(train_loss,5)}, train performance: {round(train_perf,5)}")
             
             # Validation
             val_loss = self._evaluate(loader_validation, criterion, seed)
@@ -281,9 +284,9 @@ class StandardTrainer(BaseTrainer):
             if self.use_mine:
                 self.mine_optimizer.zero_grad()
                 mine_loss = self.mine_network(bert_out.detach(), mlp_out.detach())
-                loss = loss + mine_loss
                 mine_loss.backward()
                 self.mine_optimizer.step()
+                loss = loss + mine_loss.detach()
             elif self.use_infonce:
                 loss = loss + info_nce_loss(bert_out, mlp_out, temperature=0.5)
             elif self.use_mmd:
@@ -294,6 +297,9 @@ class StandardTrainer(BaseTrainer):
             loss = criterion(y_hat, y)
         
         loss.backward()
+        if self.model_type == "FusionSkipNet":
+            # Add gradient clipping to prevent NaN values
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         optimizer.step()
         
         return loss.item(), y.size(0)
@@ -833,8 +839,8 @@ def hp_optimization_pretrained(model_type, criterion, seed, device, datasets_nam
                   optimizer.step()
   
           # Evaluate accuracy for this dataset
-          acc_train = unified_performance(model, dataset_name, loader_train, model_type, seed, device, training_mode="standard", data_split="_train")["accuracy"]
-          acc_val = unified_performance(model, dataset_name, loader_val, model_type, seed, device, training_mode="standard", data_split="_validation")["accuracy"]
+          acc_train = fast_unified_performance(model, dataset_name, loader_train, model_type, seed, device, training_mode="standard", data_split="_train")["accuracy"]
+          acc_val = fast_unified_performance(model, dataset_name, loader_val, model_type, seed, device, training_mode="standard", data_split="_validation")["accuracy"]
           accuracy = min(acc_train, acc_val)
           all_accuracies.append(accuracy)
   
@@ -1188,8 +1194,8 @@ def hp_optimization_losses(model_type, criterion, seed, device, datasets_names, 
           # Evaluate accuracy for this dataset
         #   acc_train = performance_pretrained(model, "_train", loader_train, model_type, seed, device)["accuracy"]
         #   acc_val = performance_pretrained(model, "_validation", loader_val, model_type, seed, device)["accuracy"]
-          acc_train = unified_performance(model, all_datasets[dataset_name], loader_train, model_type, seed, device, training_mode="standard")["accuracy"]
-          acc_val = unified_performance(model, all_datasets[dataset_name], loader_val, model_type, seed, device, training_mode="standard")["accuracy"]
+          acc_train = fast_unified_performance(model, all_datasets[dataset_name], loader_train, model_type, seed, device, training_mode="standard")["accuracy"]
+          acc_val = fast_unified_performance(model, all_datasets[dataset_name], loader_val, model_type, seed, device, training_mode="standard")["accuracy"]
           accuracy = min(acc_train, acc_val)
           all_accuracies.append(accuracy)
   

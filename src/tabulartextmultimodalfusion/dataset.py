@@ -459,8 +459,12 @@ def encode_text_numeric(input_ids, attention_masks, categoricals, numericals, mo
             # Generate one-hot encoding for each categorical variable
             one_hot_encoded = [F.one_hot(categoricals_i[:, i], num_classes=cat_vocab_sizes[i]) for i in range(len(cat_vocab_sizes))]
             
-            # Concatenate the one-hot vectors along the last dimension
-            one_hot_encoded = torch.cat(one_hot_encoded, dim=-1)
+            # Concatenate the one-hot vectors along the last dimension, or create empty tensor if none
+            if len(one_hot_encoded) > 0:
+                one_hot_encoded = torch.cat(one_hot_encoded, dim=-1)
+            else:
+                batch_size = numericals_i.shape[0]
+                one_hot_encoded = torch.empty(batch_size, 0, device=numericals_i.device)
             categoricals_i = one_hot_encoded
             
             #numeric_embedding = torch.cat([categoricals_i.float(), numericals_i.float()], dim=1)

@@ -37,6 +37,7 @@ def main():
     # select DATASET
     #DATASET choose in {"airbnb", "cloth", "jigsaw", "kick", "pet", "salary, "wine_10", "wine_100"}
     DATASETS = ["airbnb", "kick", "cloth", "wine_10", "wine_100", "income", "pet", "jigsaw"]
+    DATASETS = [ "kick", "cloth", "wine_10", "wine_100", "income", "pet", "jigsaw"]
 
     # Get from commend line all datasets as a list
     #DATASETS = args.datasets
@@ -124,7 +125,8 @@ def main():
             "CrossAttentionConcat4s", "CrossAttentionSumW4s",
             
             # Alternative fusion approaches
-            "FusionSkipNet", "CombinedModelGAT",
+            "FusionSkipNet", 
+            "CombinedModelGAT",
             
             # BERT-based methods
             "BertWithTabular", "LateFuseBERT", "AllTextBERT",
@@ -152,10 +154,14 @@ def main():
         # Experiment 3: Loss Function Comparison  
         # Test different loss functions with best-performing architecture (CrossAttentionConcat4)
         MODELS = [
-            "CrossAttentionConcat4MMD",
-            "CrossAttentionConcat4MINE",
-            "CrossAttentionConcat4InfoNCE",
+            #"CrossAttentionConcat4MMD",
+            #"CrossAttentionConcat4MINE",
+            #"CrossAttentionConcat4InfoNCE",
             "CrossAttentionConcat4Contrastive"
+        ]
+    elif args.version == "exp1s":
+        MODELS = [
+            'CrossAttentionSkipNetConcat4', 'CrossAttentionSkipNetConcat4s',
         ]
 
     # Model Naming Convention
@@ -171,11 +177,11 @@ def main():
     for DATASET in DATASETS:
         FILENAME, categorical_var, numerical_var, text_var, MAX_LEN_QUANTILE, N_CLASSES, WEIGHT_DECAY, FACTOR, N_EPOCHS, split_val, CRITERION, N_SEED, DROPOUT= load_settings(dataset = DATASET)
         # performance records
-        perf_results = pd.DataFrame()
+        perf_results = pd.DataFrame()      
         i = 0
-
+        N_SEED = 1
         for SEED in range(N_SEED):
-            print("SEED:",SEED)
+            print("SEED:",SEED)        
             for MODEL_TYPE in MODELS:
                 triplet_loader = None
                 start = time.time()
@@ -191,7 +197,7 @@ def main():
                 np.random.seed(SEED)
                 torch.manual_seed(SEED)
                 torch.cuda.manual_seed(SEED)
-                
+                                
         
                 # temporary dataframes to compute uncertainty metrics
                 uncertainty_results = pd.DataFrame()
@@ -262,7 +268,14 @@ def main():
                     
         
                 # Load Bert with a linear classification layer
-                BERT_model = DistilBertModel.from_pretrained("distilbert-base-uncased").to(device)
+                if "LANISTRR" == MODEL_TYPE:
+                    bert_config = transformers.BertConfig()
+                    bert_config.is_decoder = False
+                    BERT_model = transformers.BertModel(
+                        bert_config, add_pooling_layer=False
+                    ).from_pretrained("bert-base-uncased").to(device)
+                else:
+                    BERT_model = DistilBertModel.from_pretrained("distilbert-base-uncased").to(device)
                     
                     
                 if MODEL_TYPE == "CombinedModelGAT":
@@ -315,8 +328,6 @@ def main():
                         shuffle=False
                     )
                     
-                    
-                    
                 if MODEL_TYPE not in ["LateFuseBERT", "AllTextBERT", "OnlyTabular", "OnlyText"]:
                 #best right now
                     D_FC = 256 #best 256
@@ -326,7 +337,7 @@ def main():
                     DROPOUT = 0.1#prev: 0.2 best:0.1
                     LR = 0.0001
                     N_LAYERS = 4
-                # model initialization
+                # model initialization                
                 torch.manual_seed(SEED)
                 model = init_model(model_type = MODEL_TYPE,
                                 d_model = BERT_model.embeddings.word_embeddings.embedding_dim, # dimension = 768 for BERT family

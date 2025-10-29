@@ -146,6 +146,23 @@ def load_settings(dataset):
         N_SEED = 5
         DROPOUT = 0.1
         
+    if dataset=="mimic":
+        FILENAME = "mimic"  # Not used, handled by load_mimic
+        categorical_var = []  # Dynamically determined by load_mimic
+        numerical_var = []    # Dynamically determined by load_mimic
+        text_var = 'text'     # Column name used in load_mimic
+        MAX_LEN_QUANTILE = 0.9
+        N_CLASSES = 2  # For in-hospital mortality (binary)
+        WEIGHT_DECAY = 1e-5
+        FACTOR = 0.9
+        N_EPOCHS = 100
+        split_val = 0.2
+        CRITERION = nn.CrossEntropyLoss()
+        N_SEED = 5
+        DROPOUT = 0.1
+    else:
+      print("error")
+        
     return FILENAME, categorical_var, numerical_var, text_var, MAX_LEN_QUANTILE, N_CLASSES, WEIGHT_DECAY, FACTOR, N_EPOCHS, split_val, CRITERION, N_SEED, DROPOUT
 
 def load_pretrained_settings():

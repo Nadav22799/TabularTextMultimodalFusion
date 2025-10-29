@@ -5,6 +5,14 @@ import math
 from transformers import BertModel, DistilBertModel, TrainingArguments
 import torch.nn.functional as F
 
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib.colors import LinearSegmentedColormap
+import pandas as pd
+from typing import Dict, List, Tuple, Optional
+import warnings
+warnings.filterwarnings('ignore')
+
 from torch_geometric.nn import GATConv, GCNConv
 
 # Positional encoding (as per "Attention is all you need")
@@ -99,8 +107,11 @@ class TTT(nn.Module):
         self.text_embedding = nn.Embedding(num_embeddings=self.vocab_size, embedding_dim=self.d_model, padding_idx = 0) 
            
         # categorical embeddings
-        self.cat_embeddings = nn.ModuleList([nn.Embedding(num_embeddings=self.cat_vocab_sizes[i], embedding_dim=self.d_model, 
-                                            padding_idx = 0) for i in range(self.num_cat_var)])
+        if self.num_cat_var > 0:
+            self.cat_embeddings = nn.ModuleList([nn.Embedding(num_embeddings=self.cat_vocab_sizes[i], embedding_dim=self.d_model, 
+                                                padding_idx = 0) for i in range(self.num_cat_var)])
+        else:
+            self.cat_embeddings = nn.ModuleList()
     
         # embeddings for numericals
         self.num_embeddings = nn.ModuleList([nn.Embedding(num_embeddings=len(self.quantiles[i]), embedding_dim=self.d_model) for i in range(self.num_numerical_var)])
@@ -134,8 +145,9 @@ class TTT(nn.Module):
     def init_weights(self):
         # embeddings
         nn.init.kaiming_uniform_(self.text_embedding.weight)
-        for i in range(self.num_cat_var):
-            nn.init.kaiming_uniform_(self.cat_embeddings[i].weight)
+        if self.num_cat_var > 0:
+            for i in range(self.num_cat_var):
+                nn.init.kaiming_uniform_(self.cat_embeddings[i].weight)
         for i in range(self.num_numerical_var):
             nn.init.kaiming_uniform_(self.num_embeddings[i].weight)
         # final FC network
@@ -151,8 +163,11 @@ class TTT(nn.Module):
     def forward(self, texts, padding_mask, categoricals, numericals):
 
         # 1. reshape categoricals and numericals for embeddings
-        categorical_list = [categoricals[:,i].unsqueeze(dim=1) for i in range(self.num_cat_var)]
-        C = torch.zeros((len(numericals), len(self.quantiles[0])), dtype = int).to(self.device)
+        if self.num_cat_var > 0:
+            categorical_list = [categoricals[:,i].unsqueeze(dim=1) for i in range(self.num_cat_var)]
+        else:
+            categorical_list = []
+        C = torch.zeros((len(numericals), len(self.quantiles[0])), dtype = torch.float64).to(self.device)
         for i in range(len(self.quantiles[0])):
             C[:,i] = i
         numerical_token_list = [C for i in range(self.num_numerical_var)]
@@ -170,9 +185,12 @@ class TTT(nn.Module):
         texts = self.text_embedding(texts) 
         texts = self.embedding_dropout(texts)
         # categorical embedding
-        cat_embedding_list = [self.cat_embeddings[i](categorical_list[i]) for i in range(self.num_cat_var)]
-        categoricals = torch.cat([cat_embedding_list[i] for i in range(self.num_cat_var)], dim = 1)
-        categoricals = self.cat_dropout(categoricals)
+        if self.num_cat_var > 0:
+            cat_embedding_list = [self.cat_embeddings[i](categorical_list[i]) for i in range(self.num_cat_var)]
+            categoricals = torch.cat([cat_embedding_list[i] for i in range(self.num_cat_var)], dim = 1)
+            categoricals = self.cat_dropout(categoricals)
+        else:
+            categoricals = torch.empty(numericals.shape[0], 0, self.d_model, device=numericals.device)
         # numerical embedding
         num_embedding_list = [self.num_embeddings[i](numerical_token_list[i]) for i in range(self.num_numerical_var)]
         # numericals: Weights x Quantile Embeddings
@@ -244,7 +262,10 @@ class LateFuseBERT(nn.Module):
         self.n_classes = n_classes # number of classes
         
         # categorical embeddings
-        self.cat_embeddings = nn.ModuleList([nn.Embedding(num_embeddings=self.cat_vocab_sizes[i], embedding_dim=self.d_model, padding_idx = 0) for i in range(self.num_cat_var)])
+        if self.num_cat_var > 0:
+            self.cat_embeddings = nn.ModuleList([nn.Embedding(num_embeddings=self.cat_vocab_sizes[i], embedding_dim=self.d_model, padding_idx = 0) for i in range(self.num_cat_var)])
+        else:
+            self.cat_embeddings = nn.ModuleList()
     
         # linear mapper for numerical data
         self.num_linears = nn.ModuleList([nn.Linear(1, self.d_model) for i in range(self.num_numerical_var)])
@@ -268,8 +289,9 @@ class LateFuseBERT(nn.Module):
 
     def init_weights(self):
         # embeddings
-        for i in range(self.num_cat_var):
-            nn.init.kaiming_uniform_(self.cat_embeddings[i].weight)
+        if self.num_cat_var > 0:
+            for i in range(self.num_cat_var):
+                nn.init.kaiming_uniform_(self.cat_embeddings[i].weight)
         # numerical linear
         for i in range(self.num_numerical_var):
             nn.init.zeros_(self.num_linears[i].bias)
@@ -284,13 +306,19 @@ class LateFuseBERT(nn.Module):
     def forward(self, texts, attention_mask, categoricals, numericals):
 
         # 1. reshape categoricals for embeddings and numericals before linear transformation 
-        categorical_list = [categoricals[:,i].unsqueeze(dim=1) for i in range(self.num_cat_var)]
+        if self.num_cat_var > 0:
+            categorical_list = [categoricals[:,i].unsqueeze(dim=1) for i in range(self.num_cat_var)]
+        else:
+            categorical_list = []
         numerical_list = [numericals[:,i].unsqueeze(dim=1).unsqueeze(dim=1) for i in range(self.num_numerical_var)]
         
         # 2. embedding layers
-        cat_embedding_list = [self.cat_embeddings[i](categorical_list[i]) for i in range(self.num_cat_var)]
-        categoricals = torch.cat([cat_embedding_list[i] for i in range(self.num_cat_var)], dim = 1)
-        categoricals = self.cat_dropout(categoricals)
+        if self.num_cat_var > 0:
+            cat_embedding_list = [self.cat_embeddings[i](categorical_list[i]) for i in range(self.num_cat_var)]
+            categoricals = torch.cat([cat_embedding_list[i] for i in range(self.num_cat_var)], dim = 1)
+            categoricals = self.cat_dropout(categoricals)
+        else:
+            categoricals = torch.empty(numericals.shape[0], 0, self.d_model, device=numericals.device)
         numerical_embedding_list = [self.num_linears[i](numerical_list[i].float()) for i in range(self.num_numerical_var)]
         numericals = torch.cat([numerical_embedding_list[i] for i in range(self.num_numerical_var)], dim = 1)
         tabulars = torch.cat([categoricals, numericals], dim = 1) # concatenate categorical and numerical embeddings
@@ -378,51 +406,92 @@ class TabularForBert(nn.Module):
     def __init__(self, num_cat_var, num_numerical_var, nhead, n_layers, cat_embed_dims, num_classes, dropout, d_model, device):
         super(TabularForBert, self).__init__()
         
-        self.dropout = dropout # dropout rate
+        self.dropout = dropout
         self.num_cat_var = num_cat_var
-        
         self.cat_vocab_sizes = cat_embed_dims
         self.d_model = d_model
         self.num_numerical_var = num_numerical_var
         
-        # categorical embeddings
-        self.cat_embeddings = nn.ModuleList([nn.Embedding(num_embeddings=self.cat_vocab_sizes[i], embedding_dim=self.d_model, padding_idx = 0) for i in range(self.num_cat_var)])
+        # Categorical embeddings
+        if self.num_cat_var > 0:
+            self.cat_embeddings = nn.ModuleList([
+                nn.Embedding(num_embeddings=self.cat_vocab_sizes[i], 
+                           embedding_dim=self.d_model, 
+                           padding_idx=0) 
+                for i in range(self.num_cat_var)
+            ])
+            # Proper initialization for embeddings
+            for embedding in self.cat_embeddings:
+                nn.init.normal_(embedding.weight, mean=0, std=0.01)
+        else:
+            self.cat_embeddings = nn.ModuleList()
     
-        # linear mapper for numerical data
-        self.num_linears = nn.ModuleList([nn.Linear(1, self.d_model) for i in range(self.num_numerical_var)])
+        # Linear mapper for numerical data
+        self.num_linears = nn.ModuleList([
+            nn.Linear(1, self.d_model) for i in range(self.num_numerical_var)
+        ])
         
-        # classification token [CLS], is learnable
-        self.tab_cls = nn.Parameter(data=torch.rand(1, self.d_model), requires_grad=True)
+        # Proper initialization for numerical linear layers
+        for linear in self.num_linears:
+            nn.init.xavier_uniform_(linear.weight, gain=0.01)
+            if linear.bias is not None:
+                nn.init.zeros_(linear.bias)
+        
+        # Classification token [CLS]
+        self.tab_cls = nn.Parameter(data=torch.randn(1, self.d_model) * 0.01, requires_grad=True)
+        
+        # Layer normalization for stability
+        self.input_norm = nn.LayerNorm(self.d_model)
           
         # Self Attention Transformer encoder
-        self.tab_encoder_layers = nn.TransformerEncoderLayer(self.d_model, nhead, 
-                                                              self.d_model, dropout=self.dropout, batch_first=True)
+        self.tab_encoder_layers = nn.TransformerEncoderLayer(
+            self.d_model, nhead, self.d_model, 
+            dropout=self.dropout, batch_first=True
+        )
         self.tab_transformer_encoder = nn.TransformerEncoder(self.tab_encoder_layers, n_layers)
         
         self.fc = nn.Linear(self.d_model, num_classes)
+        
+        # Initialize final layer
+        nn.init.xavier_uniform_(self.fc.weight, gain=0.01)
+        if self.fc.bias is not None:
+            nn.init.zeros_(self.fc.bias)
 
     def forward(self, input_ids, attention_mask, categoricals, numericals):
         
-        # 1. reshape categoricals for embeddings and numericals before linear transformation 
-        categorical_list = [categoricals[:,i].unsqueeze(dim=1) for i in range(self.num_cat_var)]
+        # Clean numerical inputs
+        numericals = torch.nan_to_num(numericals, nan=0.0)
+        numericals = torch.clamp(numericals, -10, 10)
+        
+        # Reshape inputs
+        if self.num_cat_var > 0:
+            categorical_list = [categoricals[:,i].unsqueeze(dim=1) for i in range(self.num_cat_var)]
+        else:
+            categorical_list = []
+        
         numerical_list = [numericals[:,i].unsqueeze(dim=1).unsqueeze(dim=1) for i in range(self.num_numerical_var)]
         
-        # 2. embedding layers
-        cat_embedding_list = [self.cat_embeddings[i](categorical_list[i]) for i in range(self.num_cat_var)]
-        categoricals = torch.cat([cat_embedding_list[i] for i in range(self.num_cat_var)], dim = 1)
-        #categoricals = self.cat_dropout(categoricals)
+        # Generate embeddings
+        if self.num_cat_var > 0:
+            cat_embedding_list = [self.cat_embeddings[i](categorical_list[i]) for i in range(self.num_cat_var)]
+            categoricals = torch.cat(cat_embedding_list, dim=1)
+        else:
+            categoricals = torch.empty(numericals.shape[0], 0, self.d_model, device=numericals.device)
+        
         numerical_embedding_list = [self.num_linears[i](numerical_list[i].float()) for i in range(self.num_numerical_var)]
-        numericals = torch.cat([numerical_embedding_list[i] for i in range(self.num_numerical_var)], dim = 1)
-        tabulars = torch.cat([categoricals, numericals], dim = 1) # concatenate categorical and numerical embeddings
+        numericals = torch.cat(numerical_embedding_list, dim=1)
+        tabulars = torch.cat([categoricals, numericals], dim=1)
         
-        # 3. add classification token [CLS], * sqrt(d) prevent these input embeddings from becoming excessively small
-        tabulars = torch.stack([torch.vstack((self.tab_cls, tabulars[i])) for i in range(len(tabulars))]) * math.sqrt(self.d_model)
+        # Add classification token with layer normalization instead of scaling
+        batch_size = tabulars.shape[0]
+        cls_tokens = self.tab_cls.expand(batch_size, -1, -1)
+        tabulars = torch.cat([cls_tokens, tabulars], dim=1)
+        tabulars = self.input_norm(tabulars)
         
-        # 4. Self attention Transformer encoder (tabular stream)
+        # Transformer encoder
         tabulars = self.tab_transformer_encoder(tabulars)
-
-        tabular_output = tabulars[:,0,:]
-
+        tabular_output = tabulars[:,0,:]  # CLS token output
+        
         logits = self.fc(tabular_output)
 
         return logits, None, tabular_output
@@ -450,7 +519,7 @@ class OnlyTabular(nn.Module):
         
         self.dropout = dropout # dropout rate
         self.cat_vocab_sizes = cat_embed_dims
-        self.d_model = sum(cat_embed_dims) + num_numerical_var# Model dimension for scaling #v1= sum(cat_embed_dims), v2=num_cat_var
+        self.d_model = sum(cat_embed_dims) + num_numerical_var if len(cat_embed_dims) > 0 else num_numerical_var# Model dimension for scaling #v1= sum(cat_embed_dims), v2=num_cat_var
         self.num_numerical_var = num_numerical_var
         
         # MLP model for tabular classification
@@ -477,9 +546,12 @@ class OnlyTabular(nn.Module):
         numericals = numericals.squeeze(dim=2)
         
         # One-hot encoding for categorical variables
-        one_hot_encoded = [F.one_hot(categoricals[:, i], num_classes=self.cat_vocab_sizes[i]) for i in range(len(self.cat_vocab_sizes))]
-        one_hot_encoded = torch.cat(one_hot_encoded, dim=-1)
-        categoricals = one_hot_encoded
+        if len(self.cat_vocab_sizes) > 0:
+            one_hot_encoded = [F.one_hot(categoricals[:, i], num_classes=self.cat_vocab_sizes[i]) for i in range(len(self.cat_vocab_sizes))]
+            one_hot_encoded = torch.cat(one_hot_encoded, dim=-1)
+            categoricals = one_hot_encoded
+        else:
+            categoricals = torch.empty(numericals.shape[0], 0, device=numericals.device)
         
         # Concatenate categorical and numerical features
         tabulars = torch.cat([categoricals, numericals], dim=1)     
@@ -750,52 +822,108 @@ class CrossAttention(nn.Module):
 
         return pooled_output1, pooled_output2, tabular_embeddings.mean(dim=1), bert_i_o
         
+        
 class SkipBlock(nn.Module):
     def __init__(self, in_features, out_features, dropout=0.0):
         super(SkipBlock, self).__init__()
         self.linear = nn.Linear(in_features, out_features)
-        self.bn = nn.BatchNorm1d(out_features)
+        
+        # ADD LAYER NORMALIZATION for stability
+        self.layer_norm = nn.LayerNorm(out_features)
+        
         self.activation = nn.ReLU()
         self.dropout = nn.Dropout(dropout)
-
+        
+        # Fix skip connection
         self.skip = nn.Identity()
         if in_features != out_features:
             self.skip = nn.Linear(in_features, out_features)
-
+            
+        # CRITICAL: Proper initialization
+        self._init_weights()
+    
+    def _init_weights(self):
+        """Proper weight initialization to prevent gradient explosion"""
+        # Use smaller initialization for residual networks
+        nn.init.xavier_uniform_(self.linear.weight, gain=0.1)
+        if self.linear.bias is not None:
+            nn.init.zeros_(self.linear.bias)
+            
+        if isinstance(self.skip, nn.Linear):
+            nn.init.xavier_uniform_(self.skip.weight, gain=0.1)
+            if self.skip.bias is not None:
+                nn.init.zeros_(self.skip.bias)
+    
     def forward(self, x, y):
-        residual = self.skip(x)
+        # PROBLEM 1: You're applying skip to x but linear to y
+        # This creates dimension mismatches and unstable gradients
+        
+        # FIXED VERSION:
+        residual = self.skip(x)  # Transform x to match output dimensions
+        
+        # Apply transformation to y (the evolving representation)
         y = self.linear(y)
-        y = self.bn(y)
+        y = self.layer_norm(y)  # Add normalization
         y = self.activation(y)
         y = self.dropout(y)
-        return y + residual
+        
+        # Residual connection: add the transformed input (x) to transformed y
+        output = y + residual
+        
+        return output
 
 class FusionSkipNet(nn.Module):
     def __init__(self, TabEmbed, num_cat_var, num_numerical_var, nhead, n_layers, cat_embed_dims, num_classes, dropout, d_model, device, bert_self_attention, d_ff, d_fc, ca_dropout):
         super(FusionSkipNet, self).__init__()
-
-        #self.combModel = UniModels(TabEmbed, num_cat_var, num_numerical_var, nhead, n_layers, cat_embed_dims, num_classes, dropout, d_model, device, bert_self_attention, d_ff, d_fc, ca_dropout).to(device)
+        
         self.combModel = UniModels(TabEmbed, num_numerical_var, nhead, n_layers, cat_embed_dims, num_classes, dropout, d_model, device, bert_self_attention, d_ff, d_fc, ca_dropout).to(device)
-
-        # Stack of skip blocks
+        
+        # PROBLEM 2: All dimensions are the same (d_model)
+        # This doesn't allow the network to learn complex transformations
+        
+        # FIXED VERSION: Progressive dimension reduction
         layers = []
-        hidden_dims = [d_model] * n_layers 
-        for dim in hidden_dims:
-            layers.append(SkipBlock(d_model, dim, dropout))
-            in_dim = dim
+        current_dim = d_model
+        
+        # Create layers with varying dimensions for better learning
+        hidden_dims = [d_model, d_model // 2, d_model // 4, d_model // 8]
+        hidden_dims = [max(dim, d_fc) for dim in hidden_dims]  # Ensure minimum size
+        
+        for i, next_dim in enumerate(hidden_dims):
+            layers.append(SkipBlock(current_dim, next_dim, dropout))
+            current_dim = next_dim
+            
         self.skip_layers = nn.ModuleList(layers)
-
-        self.output = nn.Linear(in_dim, num_classes)
-
+        
+        # Final projection layer
+        self.output = nn.Linear(current_dim, num_classes)
+        
+        # CRITICAL: Initialize the final layer properly
+        nn.init.xavier_uniform_(self.output.weight, gain=0.01)  # Very small gain
+        if self.output.bias is not None:
+            nn.init.zeros_(self.output.bias)
+    
     def forward(self, input_ids, attention_mask, categoricals, numericals):
         bert_outputs, tabular_output, _, _ = self.combModel(input_ids, attention_mask, categoricals, numericals)
-        #print(bert_outputs.size(), tabular_output.size())
-        #x = self.skip_layers(bert_outputs, tabular_output)
-        x, y = bert_outputs, tabular_output
+        
+        # PROBLEM 3: The way you're using skip blocks is incorrect
+        # You're keeping x constant and only transforming y
+        
+        # FIXED VERSION:
+        # Start with one modality and progressively fuse with the other
+        x = bert_outputs  # Keep text features as the "skip" input
+        y = tabular_output  # Transform tabular features
+        
+        # Alternative approach: Initialize y as a combination
+        # y = (bert_outputs + tabular_output) / 2  # Simple fusion to start
+        
         for layer in self.skip_layers:
-            y = layer(x, y)
+            y = layer(x, y)  # x provides skip connection, y is transformed
+            # For next iteration, update x to be the previous output
+            x = y.detach()  # Break gradient flow for stability
+        
         logits = self.output(y)
-        return logits, None, None
+        return logits, bert_outputs, tabular_output
     
 # class TokenFeatureCrossAttention(nn.Module):
 #     def __init__(self, dim_q, dim_kv, dim_out):
@@ -834,7 +962,6 @@ class GatedResidualBlock(nn.Module):
         return self.norm(fused)
 
 
-# class TokenFeatureCrossAttentionFusionNet(nn.Module):
 class CrossAttentionSkipNet(nn.Module):
     def __init__(self, TabEmbed, num_numerical_var, nhead, n_layers, cat_embed_dims, num_classes, dropout,
                   d_model, device, bert_self_attention, d_ff, d_fc, ca_dropout):
@@ -844,28 +971,29 @@ class CrossAttentionSkipNet(nn.Module):
         self.bert_self_attention = bert_self_attention
         
         self.cross_text_to_tab = nn.ModuleList([
-            #TokenFeatureCrossAttention(dim_q=hidden_dim, dim_kv=hidden_dim, dim_out=hidden_dim)
             MultiHeadCrossAttention(d_model, d_ff, num_heads=nhead, dropout=ca_dropout).to(device)
             for _ in range(n_layers)
         ])
         self.cross_tab_to_text = nn.ModuleList([
-            # TokenFeatureCrossAttention(dim_q=hidden_dim, dim_kv=hidden_dim, dim_out=hidden_dim)
             MultiHeadCrossAttention(d_model, d_ff, num_heads=nhead, dropout=ca_dropout).to(device)
             for _ in range(n_layers)
         ])
 
         self.res_text = nn.ModuleList([
-            GatedResidualBlock(d_ff) for _ in range(n_layers)
+            GatedResidualBlock(d_model) for _ in range(n_layers)
         ])
         self.res_tab = nn.ModuleList([
-            GatedResidualBlock(d_ff) for _ in range(n_layers)
+            GatedResidualBlock(d_model) for _ in range(n_layers)
         ])
 
         self.text_pool = nn.AdaptiveAvgPool1d(1)
         self.tab_pool = nn.AdaptiveAvgPool1d(1)
         self.Origin_tab_pool = nn.AdaptiveAvgPool1d(1)
-        if self.bert_self_attention:
+        if not self.bert_self_attention:
             self.Origin_text_pool = nn.AdaptiveAvgPool1d(1)
+
+        # Self-attention for tabular embeddings (only used when bert_self_attention is True)
+        self.tabular_self_attention = nn.MultiheadAttention(embed_dim=d_model, num_heads=1, batch_first=True).to(device)
 
         # self.classifier = nn.Sequential(
         #     nn.Linear(2 * hidden_dim, hidden_dim),
@@ -886,25 +1014,25 @@ class CrossAttentionSkipNet(nn.Module):
             bert_outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
             #last layer embeddings
             bert_embeddings = bert_outputs.last_hidden_state  # Shape: (batch_size, seq_len, embed_dim) (experient with cls token with each feature [:,0,:].unsqueeze(1) (batch_size, 1, embed_dim))
+            tabular_embeddings, _ = self.tabular_self_attention(tabular_embeddings, tabular_embeddings, tabular_embeddings)  # Self-attention on tabular embeddings dimensions (B, F, H)
         else:
             bert_embeddings = self.bert.bert.embeddings(input_ids)  # Shape: (batch_size, seq_len, embed_dim)
 
         # 1. Encode text tokens
-        text_tokens = bert_embeddings # (B, T, H)
-        text_tokens = self.text_proj(text_tokens)  # (B, T, H)
+        text_tokens = bert_embeddings # (B, T, d_model)
 
         # 2. Prepare tabular feature embeddings
-        tab_tokens = tabular_embeddings                # (B, F, H)
+        tab_tokens = tabular_embeddings # (B, F, d_model)
 
         # 3. Cross-attention with residual updates
         for cross_txt2tab, cross_tab2txt, res_txt, res_tab in zip(
             self.cross_text_to_tab, self.cross_tab_to_text, self.res_text, self.res_tab
         ):
             # Token-level cross-modality attention
-            text_to_tab = cross_txt2tab(tab_tokens, text_tokens)  # (B, F, H)
-            tab_to_text = cross_tab2txt(text_tokens, tab_tokens)  # (B, T, H)
+            text_to_tab = cross_txt2tab(tab_tokens, text_tokens)  # (B, F, d_model)
+            tab_to_text = cross_tab2txt(text_tokens, tab_tokens)  # (B, T, d_model)
 
-            # Gated residual updates (shapes are matched internally)
+            # Gated residual updates (now in d_model dimensions)
             text_tokens = res_txt(text_tokens, tab_to_text)
             tab_tokens = res_tab(tab_tokens, text_to_tab)
 
@@ -1000,7 +1128,7 @@ class BertWithTabular(nn.Module):
 
         # Extend attention mask
         batch_size, seq_len = input_ids.shape
-        tabular_attention_mask = torch.ones((batch_size, tabular_token_count), dtype=torch.long, device=attention_mask.device)
+        tabular_attention_mask = torch.ones((batch_size, tabular_token_count), dtype=torch.float64, device=attention_mask.device)
         extended_attention_mask = torch.cat([attention_mask, tabular_attention_mask], dim=1)  # Shape: (batch_size, seq_len + num_tab_tokens)
 
         # Pass through BERT encoder
@@ -1108,9 +1236,13 @@ class TabularEmbedding(nn.Module):
         self.transform_params = transform_params or {}
         
         # Embedding layers for categorical variables
-        self.cat_embeddings = nn.ModuleList([
-            nn.Embedding(vocab_size, embed_dim) for vocab_size in cat_vocab_sizes
-        ])
+        if len(cat_vocab_sizes) > 0:
+            self.cat_embeddings = nn.ModuleList([
+                nn.Embedding(vocab_size, embed_dim) for vocab_size in cat_vocab_sizes
+            ])
+        else:
+            # Handle case where there are no categorical variables
+            self.cat_embeddings = nn.ModuleList()
         
         # Initialize numerical transformers based on the selected method
         self._init_numerical_transformers()
@@ -1297,10 +1429,26 @@ class TabularEmbedding(nn.Module):
             torch.Tensor: Combined tabular embeddings (batch_size, total_tabular_tokens, embed_dim).
         """
         numericals = numericals.float()
+
+        # Ensure tensors have correct dimensions
+        if numericals.dim() == 1:
+            numericals = numericals.unsqueeze(1)
+        if categoricals.dim() == 1:
+            categoricals = categoricals.unsqueeze(1)
         
         # Embed categorical variables
-        cat_embeddings = [emb(categoricals[:, i]) for i, emb in enumerate(self.cat_embeddings)]
-        cat_embeddings = torch.stack(cat_embeddings, dim=1)
+        if len(self.cat_embeddings) > 0:
+            # cat_embeddings = [emb(categoricals[:, i]) for i, emb in enumerate(self.cat_embeddings)]
+            # Clamp categorical indices to valid range to prevent CUDA indexing errors
+            clamped_categoricals = torch.stack([
+                torch.clamp(categoricals[:, i], 0, self.cat_embeddings[i].num_embeddings - 1).long()
+                for i in range(len(self.cat_embeddings))
+            ], dim=1)
+            cat_embeddings = [emb(clamped_categoricals[:, i]) for i, emb in enumerate(self.cat_embeddings)]
+            cat_embeddings = torch.stack(cat_embeddings, dim=1)
+        else:
+            # Handle case where there are no categorical variables
+            cat_embeddings = torch.empty(numericals.shape[0], 0, self.embed_dim, device=numericals.device)
         
         # Transform numerical variables
         num_embeddings = []
@@ -1309,7 +1457,11 @@ class TabularEmbedding(nn.Module):
             transformed = self._apply_numerical_transform(x, i)
             num_embeddings.append(transformed)
         
-        num_embeddings = torch.stack(num_embeddings, dim=1)
+        if len(num_embeddings) > 0:
+            num_embeddings = torch.stack(num_embeddings, dim=1)
+        else:
+            # Handle case where there are no numerical variables
+            num_embeddings = torch.empty(numericals.shape[0], 0, self.embed_dim, device=numericals.device)
         
         # Concatenate embeddings along the token axis
         combined_embeddings = torch.cat([cat_embeddings, num_embeddings], dim=1)
@@ -1340,6 +1492,9 @@ class MultiHeadCrossAttention(nn.Module):
         self.out_proj = nn.Linear(hidden_dim, input_dim)# nn.Linear(hidden_dim, hidden_dim)
         
         self.attn_dropout = nn.Dropout(dropout)
+        
+        # ADD THIS: Store attention weights for visualization
+        self.attention_weights = None
 
     def forward(self, x1, x2):
         """
@@ -1363,6 +1518,11 @@ class MultiHeadCrossAttention(nn.Module):
         attention_scores = torch.matmul(query, key.transpose(-2, -1)) / (self.head_dim ** 0.5)
         attention_weights = F.softmax(attention_scores, dim=-1)
         attention_weights = self.attn_dropout(attention_weights)
+        
+        # STORE ATTENTION WEIGHTS FOR VISUALIZATION (average across heads)
+        with torch.no_grad():
+            self.attention_weights = attention_weights.mean(dim=1).detach().cpu()
+        
 
         # Compute attention output
         attended_output = torch.matmul(attention_weights, value)  # (B, num_heads, S_1, head_dim)
@@ -1431,10 +1591,10 @@ def init_model(model_type, d_model, max_len, vocab_size, cat_vocab_sizes,
     
     if "CombinedModel" in model_type:
         MultiModelsObj = UniModels
+    elif "CrossAttentionSkipNet" in model_type:
+       MultiModelsObj = CrossAttentionSkipNet
     elif "CrossAttention" in model_type:
         MultiModelsObj = CrossAttention
-    #elif "CrossAttentionSkipNet" in model_type:
-     #   MultiModelsObj = CrossAttentionSkipNet
 
     if model_type in ["TTT-SRP", "TTT-PCA", "TTT-Kaiming"]:
         model_type = "TTT"
@@ -1656,3 +1816,4 @@ def init_model(model_type, d_model, max_len, vocab_size, cat_vocab_sizes,
                              device)
     
     return model
+

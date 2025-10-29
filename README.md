@@ -112,13 +112,16 @@ Run experiments using CLI arguments:
 
 ```bash
 # Run experiment 1 (architecture comparison)
-python main.py --version exp1
+python src/main.py --version exp1
 
 # Run experiment 2 (numerical encoders)
-python main.py --version exp2
+python src/main.py --version exp2
 
 # Run experiment 3 (loss functions)
-python main.py --version exp3
+python src/main.py --version exp3
+
+# Run MIMIC experiments
+python src/main_mimic.py --version exp1
 ```
 
 ### Customization Options
@@ -126,13 +129,13 @@ python main.py --version exp3
 #### 1. **Version Selection** (CLI)
 Choose experiment type via command line:
 ```bash
-python main.py --version exp1  # Architecture comparison
-python main.py --version exp2  # Numerical encoder comparison  
-python main.py --version exp3  # Loss function comparison
+python src/main.py --version exp1  # Architecture comparison
+python src/main.py --version exp2  # Numerical encoder comparison
+python src/main.py --version exp3  # Loss function comparison
 ```
 
 #### 2. **Dataset Selection** (Manual)
-Edit `main.py` to customize datasets:
+Edit `src/main.py` to customize datasets:
 ```python
 DATASETS = ["wine_10", "airbnb", "kick"]  # Select from supported datasets
 ```
@@ -143,7 +146,7 @@ Models are automatically selected based on the version:
 - **`exp2`**: Tests numerical encoders with `CrossAttentionConcat4`
 - **`exp3`**: Tests loss functions with `CrossAttentionConcat4`
 
-Or manually override in `main.py`:
+Or manually override in `src/main.py`:
 ```python
 if args.version == "exp1":
     MODELS = ["CrossAttentionConcat4s", "BertWithTabular"]  # Custom selection
@@ -227,13 +230,20 @@ Now your environment is fully set up and ready for running experiments.
 
 ```
 TabularTextMultimodalFusion/
-├── TabularTextMultimodalFusion/    # Main package
-│   ├── __init__.py
-│   ├── models.py         # Model architectures
-│   ├── dataset.py        # Data loading and preprocessing
-│   ├── settings.py       # Configuration
-│   └── utils.py          # Utilities
-├── main.py               # Experiment runner
+├── src/
+│   ├── tabulartextmultimodalfusion/    # Main package
+│   │   ├── __init__.py
+│   │   ├── models.py                   # Model architectures
+│   │   ├── dataset.py                  # Data loading and preprocessing
+│   │   ├── settings.py                 # Configuration
+│   │   ├── optimization.py             # Training and optimization
+│   │   ├── GridSearch.py               # Hyperparameter tuning
+│   │   ├── load_mimic.py               # MIMIC dataset loader
+│   │   └── mimic_utils.py              # MIMIC utilities
+│   ├── main.py                         # Experiment runner
+│   ├── main_mimic.py                   # MIMIC experiment runner
+│   └── mimic_pretrain.yaml             # MIMIC configuration
+├── environment.yaml      # Conda environment
 ├── requirements.txt      # Dependencies
 ├── setup.py             # Package setup
 └── README.md            # This file
@@ -243,22 +253,51 @@ TabularTextMultimodalFusion/
 
 ## 📚 Supported Datasets
 
-| Dataset | Domain | Text Feature | Tabular Features | Classes |
-|---------|--------|--------------|------------------|---------|
-| `airbnb` | Real Estate | Property descriptions | Price, location, amenities | 2 |
-| `kick` | E-commerce | Product descriptions | Seller metrics, pricing | 2 |
-| `cloth` | Fashion | Product titles | Brand, category, ratings | Multiple |
-| `wine_10` | Food & Beverage | Wine descriptions | Chemical composition | 10 |
-| `wine_100` | Food & Beverage | Wine descriptions | Chemical composition | 100 |
-| `income` | Demographics | Job descriptions | Personal attributes | 2 |
-| `pet` | Animals | Pet descriptions | Breed, age, characteristics | Multiple |
-| `jigsaw` | Social Media | Comments/posts | User metadata | 2 |
+### Dataset Directory Setup
+
+Create a `datasets/` directory in the project root and place all dataset files there with their respective filenames as shown below:
+
+```bash
+mkdir datasets
+# Download datasets and place them in the datasets/ directory
+```
+
+### Dataset Table
+
+| Dataset Name | Filename | URL |
+|-------------|----------|-----|
+| `airbnb` | `cleansed_listings_dec18.csv` | https://www.kaggle.com/datasets/tylerx/melbourne-airbnb-open-dataairbnb-listings-in-major-us-cities-deloitte-ml |
+| `kick` | `kickstarter_train.csv` | https://www.kaggle.com/datasets/codename007/funding-successful-projects?select=train.csv |
+| `cloth` | `Womens Clothing E-Commerce Reviews.csv` | https://www.kaggle.com/datasets/nicapotato/womens-ecommerce-clothing-reviews |
+| `wine_10` / `wine_100` | `winemag-data-130k-v2.csv` | https://www.kaggle.com/datasets/zynicide/wine-reviews |
+| `income` | `adult.csv` | https://www.kaggle.com/datasets/uciml/adult-census-income |
+| `pet` | `petfinder_train.csv` | https://www.kaggle.com/competitions/petfinder-adoption-prediction/data |
+| `jigsaw` | `jigsaw_train_100k.csv` | https://www.kaggle.com/c/jigsaw-unintended-bias-in-toxicity-classification |
+| `mimic` | Special - See below | https://physionet.org/content/mimiciv/3.1/, https://physionet.org/content/mimic-iv-note/2.2/ |
+
+### MIMIC Dataset
+
+The MIMIC-IV dataset requires special handling. The configuration and MIMIC utilities (`load_mimic.py`, `mimic_utils.py`) are adapted from https://github.com/google-research/lanistr.
+
+1. **Access**: Request access to MIMIC-IV at https://physionet.org/content/mimiciv/3.1/, https://physionet.org/content/mimic-iv-note/2.2/
+2. **Download**: Download the MIMIC-IV dataset following PhysioNet instructions
+3. **Preprocessing**: Follow the MedFuse extraction pipeline at https://github.com/nyuad-cai/MedFuse/tree/main/mimic4extract
+4. **Configuration**: Update the paths in `src/mimic_pretrain.yaml` to point to where you extracted the MIMIC-IV and MIMIC-IV-Note data (follow the same structure as used in the Lanistr repository). Replace `YOUR_PATH` placeholders with your actual data directories:
+   - `task_data_dir`: Path to extracted in-hospital-mortality data
+   - `unimodal_data_dir`: Path to unimodal data directory
+   - `preprocessed_data_dir`: Path to preprocessed data
+   - `normalizer_file`: Path to normalizer.csv
+   - `discretizer_config_path`: Path to discretizer_config.json
+5. **Run**: Use `python src/main_mimic.py --version exp1` for MIMIC experiments
 
 ### Adding Custom Datasets
 
-1. **Define dataset settings** in `settings.py`
-2. **Implement data loading** in `dataset.py`
-3. **Add preprocessing logic** following existing patterns
+You can add any custom dataset by following these steps:
+
+1. **Add your dataset file** to the `datasets/` directory
+2. **Define dataset settings** in `src/tabulartextmultimodalfusion/settings.py` by adding a new configuration block
+3. **Implement data loading** in `src/tabulartextmultimodalfusion/dataset.py` following existing preprocessing patterns
+4. **Update your experiments** to include the new dataset name
 
 ---
 
@@ -290,22 +329,6 @@ We thank the original authors for their valuable contribution. This project modi
 ## 📜 License
 
 This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
-
----
-
-## 📖 Citation
-
-If you find this repository useful, please consider citing it:
-
-```bibtex
-@misc{tabulartextmultimodalfusion2025,
-  author = {Nadav Cohen},
-  title = {TabularTextMultimodalFusion: Unified Architectures for Text + Tabular Data Fusion},
-  year = {2025},
-  howpublished = {\url{https://github.com/your-username/TabularTextMultimodalFusion}},
-  note = {Work inspired by Tabular Text Transformer}
-}
-```
 
 ---
 
