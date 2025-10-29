@@ -35,7 +35,6 @@ def main():
     args = parser.parse_args()
 
     # select DATASET
-    #DATASET choose in {"airbnb", "cloth", "jigsaw", "kick", "pet", "salary, "wine_10", "wine_100"}
     DATASETS = ["airbnb", "kick", "cloth", "wine_10", "wine_100", "income", "pet", "jigsaw"]
     DATASETS = [ "kick", "cloth", "wine_10", "wine_100", "income", "pet", "jigsaw"]
 
@@ -154,9 +153,9 @@ def main():
         # Experiment 3: Loss Function Comparison  
         # Test different loss functions with best-performing architecture (CrossAttentionConcat4)
         MODELS = [
-            #"CrossAttentionConcat4MMD",
-            #"CrossAttentionConcat4MINE",
-            #"CrossAttentionConcat4InfoNCE",
+            "CrossAttentionConcat4MMD",
+            "CrossAttentionConcat4MINE",
+            "CrossAttentionConcat4InfoNCE",
             "CrossAttentionConcat4Contrastive"
         ]
     elif args.version == "exp1s":
@@ -197,11 +196,6 @@ def main():
                 np.random.seed(SEED)
                 torch.manual_seed(SEED)
                 torch.cuda.manual_seed(SEED)
-                                
-        
-                # temporary dataframes to compute uncertainty metrics
-                uncertainty_results = pd.DataFrame()
-                val_uncertainty_results = pd.DataFrame()
         
                 perf_results.loc[i,"model type"] = MODEL_TYPE
                 perf_results.loc[i,"seed"] = SEED
@@ -334,7 +328,7 @@ def main():
                     D_FF = 256 #best 256
                     ca_dropout = 0.1#best0.1
                     N_HEADS = 8#best 8
-                    DROPOUT = 0.1#prev: 0.2 best:0.1
+                    DROPOUT = 0.1#best:0.1
                     LR = 0.0001
                     N_LAYERS = 4
                 # model initialization                
@@ -348,7 +342,7 @@ def main():
                                 num_numerical_var = NUM_NUMERICAL_VAR,
                                 quantiles = "", # not used here
                                 n_heads = N_HEADS,
-                                d_ff = D_FF, # not used here
+                                d_ff = D_FF,
                                 n_layers = N_LAYERS,
                                 dropout = DROPOUT,
                                 d_fc = D_FC,
