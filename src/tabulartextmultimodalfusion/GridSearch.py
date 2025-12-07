@@ -22,10 +22,10 @@ import copy
 from collections import defaultdict
 
 # Import your custom modules
-from settings import *
-from dataset import *
-from models import *
-from optimization import *
+from .settings import *
+from .dataset import *
+from .models import *
+from .optimization import *
 
 # Configuration
 VERSION = "Unified_Experiment_v1"

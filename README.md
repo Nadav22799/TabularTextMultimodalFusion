@@ -17,6 +17,91 @@ Inspired by and extending the ideas in [TabularTextTransformer](https://github.c
 
 ---
 
+## 📦 Installation
+
+### Option 1: Install from PyPI (Recommended for Users)
+
+**Prerequisites:** Install PyTorch and torch-geometric first, then install the package.
+
+```bash
+# 1. Install PyTorch with CUDA support (adjust CUDA version as needed)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# 2. Install torch-geometric dependencies
+pip install torch-scatter torch-sparse torch-cluster torch-spline-conv torch-geometric \
+    --find-links https://data.pyg.org/whl/torch-2.1.0+cu121.html
+
+# 3. Install this package
+pip install tabulartextmultimodalfusion
+```
+
+**Quick Start:**
+
+```python
+# Import models
+from tabulartextmultimodalfusion.models import (
+    CrossAttention,
+    CombinedModelConcat4,
+    TabularEmbedding
+)
+
+# Import dataset utilities
+from tabulartextmultimodalfusion.dataset import (
+    prepareTensorDatasetWithTokenizer,
+    preprocess_dataset
+)
+
+# Import settings
+from tabulartextmultimodalfusion.settings import load_settings
+```
+
+**See [`example.py`](example.py) for a complete working example** with synthetic data, model initialization, and training.
+
+---
+
+### Option 2: Development Installation (For Contributors/Researchers)
+
+For development, experiments, or contributing to the project:
+
+#### Method A: Using Conda (Recommended)
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/nadav22799/TabularTextMultimodalFusion
+cd TabularTextMultimodalFusion
+
+# 2. Create conda environment with all dependencies
+conda env create -f environment.yaml
+
+# 3. Activate the environment
+conda activate TTMF
+
+# 4. Install package in editable mode
+pip install -e .
+
+# 5. Run example to verify installation
+python example.py
+```
+
+#### Method B: Using pip only
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/nadav22799/TabularTextMultimodalFusion
+cd TabularTextMultimodalFusion
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Install package in editable mode
+pip install -e .
+
+# 4. Run example to verify installation
+python example.py
+```
+
+---
+
 ## 🎯 Model Selection Guide
 
 ### Base Model Architectures
@@ -197,36 +282,7 @@ MODELS = [
 
 ---
 
-## 📦 Installation
-
-This project uses a two-step installation process to ensure that all dependencies and the correct Python version are set up correctly. First, you create a dedicated environment using `conda`, and then you install the package into that environment using `pip`.
-
-### Step 1: Create the Conda Environment
-
-This command uses the `environment.yaml` file to create a new conda environment named `TTMF` with all the necessary base packages, including the correct Python version.
-
-```bash
-# Create the conda environment
-conda env create -f environment.yaml
-
-# Activate the newly created environment
-conda activate TTMF
-```
-
-### Step 2: Install the Package (Editable Mode)
-
-Once the environment is active, install the `TabularTextMultimodalFusion` package in "editable" mode. This is the recommended approach for development, as any changes you make to the source code will be immediately available without needing to reinstall.
-
-The `setup.py` file manages this process, using `requirements.txt` for additional `pip`-based dependencies.
-
-```bash
-# Install the package in editable mode
-pip install -e .
-```
-
-Now your environment is fully set up and ready for running experiments.
-
-### Package Structure (for pip installation)
+## 📁 Package Structure
 
 ```
 TabularTextMultimodalFusion/
@@ -243,10 +299,12 @@ TabularTextMultimodalFusion/
 │   ├── main.py                         # Experiment runner
 │   ├── main_mimic.py                   # MIMIC experiment runner
 │   └── mimic_pretrain.yaml             # MIMIC configuration
-├── environment.yaml      # Conda environment
-├── requirements.txt      # Dependencies
-├── setup.py             # Package setup
-└── README.md            # This file
+├── example.py           # Complete working example (Quick Start)
+├── environment.yaml     # Conda environment
+├── requirements.txt     # Dependencies
+├── setup.py            # Package setup
+├── LICENSE             # MIT License
+└── README.md           # This file
 ```
 
 ---

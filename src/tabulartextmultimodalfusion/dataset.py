@@ -7,7 +7,7 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, LabelEncoder, OrdinalEncoder
 import pandas as pd
 from collections import Counter
-from settings import * # settings
+from .settings import * # settings
 
 from sklearn.neighbors import NearestNeighbors
 from sklearn.model_selection import train_test_split
