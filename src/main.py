@@ -36,7 +36,6 @@ def main():
 
     # select DATASET
     DATASETS = ["airbnb", "kick", "cloth", "wine_10", "wine_100", "income", "pet", "jigsaw"]
-    DATASETS = [ "kick", "cloth", "wine_10", "wine_100", "income", "pet", "jigsaw"]
 
     # Get from commend line all datasets as a list
     #DATASETS = args.datasets

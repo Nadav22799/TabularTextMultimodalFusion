@@ -6,9 +6,13 @@ dependencies:
   - python=3.9
   - pip:
       - torch==2.1.0
+      - torchvision
       - optuna==3.4.0
       - transformers==4.35.2
       - pandas==1.5.3
       - numpy==1.23.5
       - scikit-learn==1.6.1
       - scipy==1.11.4
+      - matplotlib>=3.4.0
+      - seaborn>=0.11.0
+      - omegaconf>=2.1.0

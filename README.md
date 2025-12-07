@@ -21,7 +21,7 @@ Inspired by and extending the ideas in [TabularTextTransformer](https://github.c
 
 ### Option 1: Install from PyPI (Recommended for Users)
 
-**Prerequisites:** Install PyTorch and torch-geometric first, then install the package.
+For users who want to use the package without modifying the source code:
 
 ```bash
 # 1. Install PyTorch with CUDA support (adjust CUDA version as needed)
@@ -31,31 +31,22 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 pip install torch-scatter torch-sparse torch-cluster torch-spline-conv torch-geometric \
     --find-links https://data.pyg.org/whl/torch-2.1.0+cu121.html
 
-# 3. Install this package
+# 3. Install the package from PyPI
 pip install tabulartextmultimodalfusion
+
+# 4. Install additional dependencies
+pip install transformers pandas numpy scikit-learn scipy matplotlib seaborn optuna omegaconf
 ```
 
 **Quick Start:**
 
 ```python
-# Import models
-from tabulartextmultimodalfusion.models import (
-    CrossAttention,
-    CombinedModelConcat4,
-    TabularEmbedding
-)
-
-# Import dataset utilities
-from tabulartextmultimodalfusion.dataset import (
-    prepareTensorDatasetWithTokenizer,
-    preprocess_dataset
-)
-
-# Import settings
+from tabulartextmultimodalfusion.models import CrossAttention, CombinedModelConcat4, TabularEmbedding
+from tabulartextmultimodalfusion.dataset import prepareTensorDatasetWithTokenizer, preprocess_dataset
 from tabulartextmultimodalfusion.settings import load_settings
-```
 
-**See [`example.py`](example.py) for a complete working example** with synthetic data, model initialization, and training.
+# See example.py for complete usage
+```
 
 ---
 
@@ -70,14 +61,14 @@ For development, experiments, or contributing to the project:
 git clone https://github.com/nadav22799/TabularTextMultimodalFusion
 cd TabularTextMultimodalFusion
 
-# 2. Create conda environment with all dependencies
+# 2. Create conda environment from environment.yaml
 conda env create -f environment.yaml
 
 # 3. Activate the environment
 conda activate TTMF
 
-# 4. Install package in editable mode
-pip install -e .
+# 4. Install remaining dependencies and package in editable mode
+pip install -r requirements.txt && pip install -e .
 
 # 5. Run example to verify installation
 python example.py
@@ -90,15 +81,20 @@ python example.py
 git clone https://github.com/nadav22799/TabularTextMultimodalFusion
 cd TabularTextMultimodalFusion
 
-# 2. Install dependencies
+# 2. Install PyTorch with CUDA support (adjust CUDA version as needed)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# 3. Install all dependencies
 pip install -r requirements.txt
 
-# 3. Install package in editable mode
+# 4. Install package in editable mode
 pip install -e .
 
-# 4. Run example to verify installation
+# 5. Run example to verify installation
 python example.py
 ```
+
+**Note:** See [`example.py`](example.py) for a complete working example with synthetic data, model initialization, and training.
 
 ---
 

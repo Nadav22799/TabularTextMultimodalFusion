@@ -1,6 +1,9 @@
 """
 Simple example demonstrating how to use TabularTextMultimodalFusion package.
 
+IMPORTANT: Before running this example, make sure you have installed the package:
+    pip install -e .
+
 This example shows how to:
 1. Create synthetic data
 2. Initialize a CrossAttention model with Concat4 fusion
