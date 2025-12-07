@@ -54,8 +54,6 @@ from tabulartextmultimodalfusion.settings import load_settings
 
 For development, experiments, or contributing to the project:
 
-#### Method A: Using Conda (Recommended)
-
 ```bash
 # 1. Clone the repository
 git clone https://github.com/nadav22799/TabularTextMultimodalFusion
@@ -67,30 +65,13 @@ conda env create -f environment.yaml
 # 3. Activate the environment
 conda activate TTMF
 
-# 4. Install remaining dependencies and package in editable mode
-pip install -r requirements.txt && pip install -e .
-
-# 5. Run example to verify installation
-python example.py
-```
-
-#### Method B: Using pip only
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/nadav22799/TabularTextMultimodalFusion
-cd TabularTextMultimodalFusion
-
-# 2. Install PyTorch with CUDA support (adjust CUDA version as needed)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-
-# 3. Install all dependencies
+# 4. Install remaining dependencies
 pip install -r requirements.txt
 
-# 4. Install package in editable mode
+# 5. Install package in editable mode
 pip install -e .
 
-# 5. Run example to verify installation
+# 6. Run example to verify installation
 python example.py
 ```
 
